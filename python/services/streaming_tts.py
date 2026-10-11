@@ -2,15 +2,24 @@
 
 from __future__ import annotations
 
+import math
 import os
 import struct
+from array import array
 
 import httpx
 
 PAUSE_MS = {
-    "fast": 100,
+    "fast": 0,
     "normal": 350,
-    "slow": 700,
+    "slow": 1200,
+}
+
+# How much longer the spoken audio is. Beginner lands near 1.45x after overlap.
+SPEECH_STRETCH = {
+    "fast": 1.0,
+    "normal": 1.0,
+    "slow": 1.55,
 }
 
 
@@ -20,6 +29,47 @@ class TextToSpeechError(RuntimeError):
 
 def pause_milliseconds(pause_speed: str | None) -> int:
     return PAUSE_MS.get((pause_speed or "normal").lower(), PAUSE_MS["normal"])
+
+
+def speech_stretch(pause_speed: str | None) -> float:
+    return SPEECH_STRETCH.get((pause_speed or "normal").lower(), 1.0)
+
+
+def stretch_pcm(pcm: bytes, factor: float) -> bytes:
+    """Make speech longer without dropping the pitch. A higher factor is slower."""
+    if factor <= 1.01 or len(pcm) < 4:
+        return pcm
+
+    samples = array("h")
+    samples.frombytes(pcm[: len(pcm) - (len(pcm) % 2)])
+    total = len(samples)
+    frame = 1200
+    hop_in = 600
+    hop_out = max(hop_in + 1, int(hop_in * factor))
+    if total < frame * 2:
+        return pcm
+
+    window = [0.5 * (1 - math.cos(2 * math.pi * i / (frame - 1))) for i in range(frame)]
+    starts = range(0, total - frame + 1, hop_in)
+    out_len = (len(starts) - 1) * hop_out + frame
+    mixed = [0.0] * out_len
+    weight = [0.0] * out_len
+
+    for index, pos in enumerate(starts):
+        out_pos = index * hop_out
+        for i in range(frame):
+            mixed[out_pos + i] += samples[pos + i] * window[i]
+            weight[out_pos + i] += window[i]
+
+    stretched = array("h")
+    for i in range(out_len):
+        value = int(mixed[i] / weight[i]) if weight[i] else 0
+        if value > 32767:
+            value = 32767
+        elif value < -32768:
+            value = -32768
+        stretched.append(value)
+    return stretched.tobytes()
 
 
 def pcm_to_wav(pcm: bytes, sample_rate: int = 24000, channels: int = 1, sample_width: int = 2) -> bytes:
@@ -65,6 +115,7 @@ async def synthesize_sentence(text: str, pause_speed: str | None) -> dict:
     else:
         pcm, sample_rate = await _cartesia(spoken)
 
+    pcm = stretch_pcm(pcm, speech_stretch(pause_speed))
     paced = append_silence(pcm, pause_milliseconds(pause_speed), sample_rate)
     wav = pcm_to_wav(paced, sample_rate=sample_rate)
     return {

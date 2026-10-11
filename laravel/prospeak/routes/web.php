@@ -24,7 +24,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('chats', [ChatController::class, 'store'])->name('chats.store');
         Route::get('chats/{chat}', [ChatController::class, 'show'])->name('chats.api.show');
         Route::patch('chats/{chat}/settings', [ChatController::class, 'updateSettings'])->name('chats.settings');
+        Route::delete('chats/{chat}', [ChatController::class, 'destroy'])->name('chats.destroy');
         Route::post('chats/{chat}/messages', [ChatController::class, 'storeMessage'])->name('chats.messages.store');
+        Route::patch('chats/{chat}/messages/{message}/vocabulary', [ChatController::class, 'updateVocabulary'])->name('chats.messages.vocabulary');
     });
 });
 

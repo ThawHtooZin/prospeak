@@ -1,9 +1,16 @@
+import { my } from '@/lib/my';
 import { type ChatSummary, type PauseSpeed } from '@/types';
+
+export interface VocabularyItem {
+    phrase: string;
+    meaning: string;
+}
 
 export interface ChatMessageItem {
     id: string;
     sender: 'user' | 'assistant';
     content: string;
+    vocabulary?: VocabularyItem[] | null;
     created_at: string | null;
 }
 
@@ -13,7 +20,7 @@ export interface ChatDetail extends ChatSummary {
 }
 
 export const PAUSE_OPTIONS: { id: PauseSpeed; label: string; hint: string }[] = [
-    { id: 'fast', label: 'Fast', hint: 'A short breath, about 100ms' },
-    { id: 'normal', label: 'Normal', hint: 'A conversational pause, about 350ms' },
-    { id: 'slow', label: 'Slow / Beginner', hint: 'Room to listen, about 700ms' },
+    { id: 'fast', label: my.fast, hint: my.fastHint },
+    { id: 'normal', label: my.normal, hint: my.normalHint },
+    { id: 'slow', label: my.slow, hint: my.slowHint },
 ];

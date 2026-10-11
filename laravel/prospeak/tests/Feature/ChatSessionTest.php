@@ -81,6 +81,26 @@ class ChatSessionTest extends TestCase
         ]);
     }
 
+    public function test_user_can_delete_their_own_chat(): void
+    {
+        $user = User::factory()->create();
+        $chat = ChatSession::query()->create([
+            'user_id' => $user->id,
+            'title' => 'Hotel Check-in',
+            'topic' => 'Hotel Check-in',
+            'pause_speed' => 'normal',
+        ]);
+        $chat->messages()->create([
+            'sender' => 'assistant',
+            'content' => 'Welcome. Do you have a reservation?',
+        ]);
+
+        $this->actingAs($user)->deleteJson("/api/v1/chats/{$chat->id}")->assertNoContent();
+
+        $this->assertDatabaseMissing('chat_sessions', ['id' => $chat->id]);
+        $this->assertDatabaseMissing('chat_messages', ['chat_session_id' => $chat->id]);
+    }
+
     public function test_users_cannot_open_someone_elses_chat(): void
     {
         $owner = User::factory()->create();
@@ -96,6 +116,46 @@ class ChatSessionTest extends TestCase
         $this->actingAs($other)->patchJson("/api/v1/chats/{$chat->id}/settings", [
             'pause_speed' => 'fast',
         ])->assertNotFound();
+        $this->actingAs($other)->deleteJson("/api/v1/chats/{$chat->id}")->assertNotFound();
+        $this->assertDatabaseHas('chat_sessions', ['id' => $chat->id]);
+    }
+
+    public function test_tutor_vocabulary_can_be_saved_and_updated(): void
+    {
+        $user = User::factory()->create();
+        $chat = ChatSession::query()->create([
+            'user_id' => $user->id,
+            'title' => 'Making Friends',
+            'topic' => 'Making Friends',
+            'pause_speed' => 'normal',
+        ]);
+
+        $created = $this->actingAs($user)->postJson("/api/v1/chats/{$chat->id}/messages", [
+            'sender' => 'assistant',
+            'content' => 'I spend my days brewing drinks and chatting with folks.',
+            'vocabulary' => [
+                ['phrase' => 'brewing drinks', 'meaning' => 'making drinks'],
+                ['phrase' => 'folks', 'meaning' => 'people'],
+            ],
+        ]);
+
+        $created->assertCreated()
+            ->assertJsonPath('vocabulary.0.phrase', 'brewing drinks');
+
+        $messageId = $created->json('id');
+
+        $this->actingAs($user)->patchJson("/api/v1/chats/{$chat->id}/messages/{$messageId}/vocabulary", [
+            'vocabulary' => [
+                ['phrase' => 'chatting', 'meaning' => 'talking in a relaxed way'],
+            ],
+        ])->assertOk()->assertJsonPath('vocabulary.0.meaning', 'talking in a relaxed way');
+
+        $this->actingAs(User::factory()->create())
+            ->patchJson("/api/v1/chats/{$chat->id}/messages/{$messageId}/vocabulary", [
+                'vocabulary' => [
+                    ['phrase' => 'folks', 'meaning' => 'people'],
+                ],
+            ])->assertNotFound();
     }
 
     public function test_authenticated_user_can_open_the_chat_page(): void

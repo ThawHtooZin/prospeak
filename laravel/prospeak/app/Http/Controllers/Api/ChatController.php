@@ -10,6 +10,7 @@ use App\Models\ChatSession;
 use App\Support\Topics;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -74,11 +75,8 @@ class ChatController extends Controller
             ...$this->summary($chat),
             'websocket_url' => $this->websocketUrl($chat),
             'messages' => $chat->messages->map(fn (ChatMessage $message) => [
-                'id' => $message->id,
-                'sender' => $message->sender->value,
-                'content' => $message->content,
+                ...$message->toClientArray(),
                 'audio_url' => $message->audio_url,
-                'created_at' => $message->created_at?->toIso8601String(),
             ]),
         ]);
     }
@@ -101,6 +99,14 @@ class ChatController extends Controller
         ]);
     }
 
+    public function destroy(Request $request, ChatSession $chat): Response
+    {
+        $this->authorizeChat($request, $chat);
+        $chat->delete();
+
+        return response()->noContent();
+    }
+
     public function storeMessage(Request $request, ChatSession $chat): JsonResponse
     {
         $this->authorizeChat($request, $chat);
@@ -109,6 +115,9 @@ class ChatController extends Controller
             'sender' => ['required', Rule::enum(MessageSender::class)],
             'content' => ['required', 'string', 'max:5000'],
             'audio_url' => ['nullable', 'string', 'max:2048'],
+            'vocabulary' => ['sometimes', 'array', 'max:6'],
+            'vocabulary.*.phrase' => ['required', 'string', 'max:80'],
+            'vocabulary.*.meaning' => ['required', 'string', 'max:160'],
         ]);
 
         $isFirstUserLine = $data['sender'] === MessageSender::User->value
@@ -116,10 +125,12 @@ class ChatController extends Controller
             && $chat->title === 'Free conversation'
             && $chat->messages()->doesntExist();
 
+        $sender = MessageSender::from($data['sender']);
         $message = $chat->messages()->create([
-            'sender' => MessageSender::from($data['sender']),
+            'sender' => $sender,
             'content' => trim($data['content']),
             'audio_url' => $data['audio_url'] ?? null,
+            'vocabulary' => $sender === MessageSender::Assistant ? ($data['vocabulary'] ?? null) : null,
         ]);
 
         if ($isFirstUserLine) {
@@ -128,12 +139,24 @@ class ChatController extends Controller
 
         $chat->touch();
 
-        return response()->json([
-            'id' => $message->id,
-            'sender' => $message->sender->value,
-            'content' => $message->content,
-            'created_at' => $message->created_at?->toIso8601String(),
-        ], 201);
+        return response()->json($message->toClientArray(), 201);
+    }
+
+    public function updateVocabulary(Request $request, ChatSession $chat, string $message): JsonResponse
+    {
+        $this->authorizeChat($request, $chat);
+
+        $record = $chat->messages()->whereKey($message)->firstOrFail();
+        $data = $request->validate([
+            'vocabulary' => ['present', 'array', 'max:6'],
+            'vocabulary.*.phrase' => ['required', 'string', 'max:80'],
+            'vocabulary.*.meaning' => ['required', 'string', 'max:160'],
+        ]);
+
+        $record->vocabulary = array_values($data['vocabulary']);
+        $record->save();
+
+        return response()->json($record->toClientArray());
     }
 
     private function authorizeChat(Request $request, ChatSession $chat): void

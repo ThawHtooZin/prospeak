@@ -1,3 +1,4 @@
+import { my } from '@/lib/my';
 import { login } from '@/routes';
 import { store } from '@/routes/register';
 import { Form, Head } from '@inertiajs/react';
@@ -13,10 +14,10 @@ import AuthLayout from '@/layouts/auth-layout';
 export default function Register() {
     return (
         <AuthLayout
-            title="Create an account"
-            description="Enter your details below to create your account"
+            title={my.registerTitle}
+            description={my.registerHelp}
         >
-            <Head title="Register" />
+            <Head title={my.registerHead} />
             <Form
                 {...store.form()}
                 resetOnSuccess={['password', 'password_confirmation']}
@@ -27,7 +28,7 @@ export default function Register() {
                     <>
                         <div className="grid gap-6">
                             <div className="grid gap-2">
-                                <Label htmlFor="name">Name</Label>
+                                <Label htmlFor="name">{my.name}</Label>
                                 <Input
                                     id="name"
                                     type="text"
@@ -36,7 +37,7 @@ export default function Register() {
                                     tabIndex={1}
                                     autoComplete="name"
                                     name="name"
-                                    placeholder="Full name"
+                                    placeholder={my.fullName}
                                 />
                                 <InputError
                                     message={errors.name}
@@ -45,7 +46,7 @@ export default function Register() {
                             </div>
 
                             <div className="grid gap-2">
-                                <Label htmlFor="email">Email address</Label>
+                                <Label htmlFor="email">{my.email}</Label>
                                 <Input
                                     id="email"
                                     type="email"
@@ -59,7 +60,7 @@ export default function Register() {
                             </div>
 
                             <div className="grid gap-2">
-                                <Label htmlFor="password">Password</Label>
+                                <Label htmlFor="password">{my.password}</Label>
                                 <Input
                                     id="password"
                                     type="password"
@@ -67,14 +68,14 @@ export default function Register() {
                                     tabIndex={3}
                                     autoComplete="new-password"
                                     name="password"
-                                    placeholder="Password"
+                                    placeholder={my.password}
                                 />
                                 <InputError message={errors.password} />
                             </div>
 
                             <div className="grid gap-2">
                                 <Label htmlFor="password_confirmation">
-                                    Confirm password
+                                    {my.confirmPassword}
                                 </Label>
                                 <Input
                                     id="password_confirmation"
@@ -83,7 +84,7 @@ export default function Register() {
                                     tabIndex={4}
                                     autoComplete="new-password"
                                     name="password_confirmation"
-                                    placeholder="Confirm password"
+                                    placeholder={my.confirmPassword}
                                 />
                                 <InputError
                                     message={errors.password_confirmation}
@@ -97,14 +98,14 @@ export default function Register() {
                                 data-test="register-user-button"
                             >
                                 {processing && <Spinner />}
-                                Create account
+                                {my.createAccount}
                             </Button>
                         </div>
 
                         <div className="text-center text-sm text-muted-foreground">
-                            Already have an account?{' '}
+                            {my.alreadyHaveAccount}{' '}
                             <TextLink href={login()} tabIndex={6}>
-                                Log in
+                                {my.logIn}
                             </TextLink>
                         </div>
                     </>

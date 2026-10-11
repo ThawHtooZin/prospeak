@@ -1,3 +1,4 @@
+import { type ChatMessageItem, type VocabularyItem } from '@/types/chat';
 import { type PauseSpeed } from '@/types';
 
 function csrfToken(): string {
@@ -37,15 +38,35 @@ export function createChat(input: {
     return request<{ chat_id: string; status: string; websocket_url: string }>('/api/v1/chats', 'POST', input);
 }
 
+export function deleteChat(chatId: string) {
+    return request<{ status?: string }>(`/api/v1/chats/${chatId}`, 'DELETE');
+}
+
 export function updatePauseSpeed(chatId: string, pauseSpeed: PauseSpeed) {
     return request<{ chat_id: string; pause_speed: PauseSpeed }>(`/api/v1/chats/${chatId}/settings`, 'PATCH', {
         pause_speed: pauseSpeed,
     });
 }
 
-export function storeMessage(chatId: string, sender: 'user' | 'assistant', content: string) {
+export function fetchMessages(chatId: string) {
+    return request<{ messages: ChatMessageItem[] }>(`/api/v1/chats/${chatId}`, 'GET');
+}
+
+export function storeMessage(
+    chatId: string,
+    sender: 'user' | 'assistant',
+    content: string,
+    vocabulary?: VocabularyItem[] | null,
+) {
     return request<{ id: string }>(`/api/v1/chats/${chatId}/messages`, 'POST', {
         sender,
         content,
+        ...(vocabulary != null ? { vocabulary } : {}),
+    });
+}
+
+export function saveVocabulary(chatId: string, messageId: string, vocabulary: VocabularyItem[]) {
+    return request<ChatMessageItem>(`/api/v1/chats/${chatId}/messages/${messageId}/vocabulary`, 'PATCH', {
+        vocabulary,
     });
 }

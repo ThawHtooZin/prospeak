@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+laravel="$root/laravel/prospeak"
+voice="$root/python"
+uvicorn="$voice/.venv/bin/uvicorn"
+
+if [[ ! -x "$uvicorn" ]]; then
+  echo "Voice engine is not set up. From python/: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt" >&2
+  exit 1
+fi
+
+if [[ ! -d "$laravel/vendor" || ! -d "$laravel/node_modules" ]]; then
+  echo "Laravel app is not set up. From laravel/prospeak: composer install && npm install" >&2
+  exit 1
+fi
+
+cd "$laravel"
+
+exec npx concurrently \
+  --kill-others \
+  --names server,queue,logs,vite,voice \
+  -c "#93c5fd,#c4b5fd,#fb7185,#fdba74,#86efac" \
+  "php artisan serve" \
+  "php artisan queue:listen --tries=1" \
+  "php artisan pail --timeout=0" \
+  "npm run dev" \
+  "cd $(printf '%q' "$voice") && .venv/bin/uvicorn main:app --host 0.0.0.0 --port 8001 --reload"

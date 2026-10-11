@@ -1,3 +1,4 @@
+import { my } from '@/lib/my';
 import { PAUSE_OPTIONS } from '@/types/chat';
 import { type PauseSpeed } from '@/types';
 
@@ -10,7 +11,7 @@ interface SpeedControlSliderProps {
 export function SpeedControlSlider({ value, onChange, compact = false }: SpeedControlSliderProps) {
     return (
         <div className={compact ? 'flex flex-col gap-2' : 'grid gap-3'}>
-            {!compact && <p className="text-sm text-[#a39888]">Pause between sentences</p>}
+            {!compact && <p className="text-sm text-[#a39888]">{my.pauseBetween}</p>}
             <div className={`grid gap-2 ${compact ? 'grid-cols-3' : 'sm:grid-cols-3'}`}>
                 {PAUSE_OPTIONS.map((option) => {
                     const selected = option.id === value;

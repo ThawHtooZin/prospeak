@@ -17,6 +17,7 @@ class ChatMessage extends Model
         'chat_session_id',
         'sender',
         'content',
+        'vocabulary',
         'audio_url',
     ];
 
@@ -27,7 +28,22 @@ class ChatMessage extends Model
     {
         return [
             'sender' => MessageSender::class,
+            'vocabulary' => 'array',
             'created_at' => 'datetime',
+        ];
+    }
+
+    /**
+     * @return array{id: string, sender: string, content: string, vocabulary: array<int, array{phrase: string, meaning: string}>|null, created_at: string|null}
+     */
+    public function toClientArray(): array
+    {
+        return [
+            'id' => $this->id,
+            'sender' => $this->sender->value,
+            'content' => $this->content,
+            'vocabulary' => $this->vocabulary,
+            'created_at' => $this->created_at?->toIso8601String(),
         ];
     }
 

@@ -1,9 +1,12 @@
+import { my } from '@/lib/my';
+import { capturePcm } from '@/lib/pcm-wav';
 import { type PauseSpeed } from '@/types';
+import { type VocabularyItem } from '@/types/chat';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 export type VoicePhase = 'idle' | 'listening' | 'thinking' | 'speaking';
 
-const SILENCE_MS = 800;
+const SILENCE_MS = 5000;
 const SPEECH_THRESHOLD = 0.025;
 const MIN_SPEECH_MS = 280;
 const MAX_RECORD_MS = 20000;
@@ -13,16 +16,55 @@ interface UseAudioStreamOptions {
     topic: string | null;
     pauseSpeed: PauseSpeed;
     greet: boolean;
-    onTranscript: (role: 'user' | 'assistant', text: string, final: boolean) => void;
+    onTranscript: (role: 'user' | 'assistant', text: string, final: boolean, words?: VocabularyItem[]) => void;
+    onVocabulary?: (messageId: string, words: VocabularyItem[]) => void;
     onError: (message: string) => void;
 }
 
-function preferredMime(): string {
-    if (typeof MediaRecorder === 'undefined') {
-        return 'audio/webm';
+interface SpeechResultEvent {
+    resultIndex: number;
+    results: ArrayLike<{ isFinal: boolean; 0?: { transcript: string } }>;
+}
+
+interface LiveRecognition {
+    lang: string;
+    continuous: boolean;
+    interimResults: boolean;
+    maxAlternatives: number;
+    onresult: ((event: SpeechResultEvent) => void) | null;
+    onerror: ((event: { error: string }) => void) | null;
+    onend: (() => void) | null;
+    start: () => void;
+    stop: () => void;
+    abort: () => void;
+}
+
+function closeAudioContext(context: AudioContext | null) {
+    if (!context || context.state === 'closed') {
+        return;
     }
-    const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
-    return candidates.find((type) => MediaRecorder.isTypeSupported(type)) ?? 'audio/webm';
+    void context.close().catch(() => undefined);
+}
+
+function speechRecognition(): LiveRecognition | null {
+    const host = window as Window & {
+        SpeechRecognition?: new () => LiveRecognition;
+        webkitSpeechRecognition?: new () => LiveRecognition;
+    };
+    const Ctor = host.SpeechRecognition ?? host.webkitSpeechRecognition;
+    if (!Ctor) {
+        return null;
+    }
+    const recognition = new Ctor();
+    recognition.lang = 'en-US';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+    return recognition;
+}
+
+function spokenText(finalText: string, interim: string): string {
+    return `${finalText} ${interim}`.replace(/\s+/g, ' ').trim();
 }
 
 function rms(analyser: AnalyserNode, data: Uint8Array): number {
@@ -41,6 +83,7 @@ export function useAudioStream({
     pauseSpeed,
     greet,
     onTranscript,
+    onVocabulary,
     onError,
 }: UseAudioStreamOptions) {
     const [phase, setPhase] = useState<VoicePhase>('idle');
@@ -50,7 +93,7 @@ export function useAudioStream({
     const socketRef = useRef<WebSocket | null>(null);
     const phaseRef = useRef<VoicePhase>('idle');
     const pauseRef = useRef(pauseSpeed);
-    const handlersRef = useRef({ onTranscript, onError });
+    const handlersRef = useRef({ onTranscript, onVocabulary, onError });
     const playbackRef = useRef<AudioContext | null>(null);
     const sourcesRef = useRef<AudioBufferSourceNode[]>([]);
     const nextTimeRef = useRef(0);
@@ -59,8 +102,8 @@ export function useAudioStream({
     const recorderStopRef = useRef<(() => void) | null>(null);
 
     useEffect(() => {
-        handlersRef.current = { onTranscript, onError };
-    }, [onTranscript, onError]);
+        handlersRef.current = { onTranscript, onVocabulary, onError };
+    }, [onTranscript, onVocabulary, onError]);
 
     useEffect(() => {
         pauseRef.current = pauseSpeed;
@@ -85,7 +128,7 @@ export function useAudioStream({
     }, []);
 
     const playbackContext = useCallback(() => {
-        if (!playbackRef.current) {
+        if (!playbackRef.current || playbackRef.current.state === 'closed') {
             playbackRef.current = new AudioContext();
         }
         return playbackRef.current;
@@ -145,7 +188,7 @@ export function useAudioStream({
             };
 
             socket.onerror = () => {
-                handlersRef.current.onError('The voice engine is not connected. Start the Python service on port 8001.');
+                handlersRef.current.onError(my.voiceDown);
             };
 
             socket.onmessage = (event) => {
@@ -157,19 +200,26 @@ export function useAudioStream({
                     audio?: string;
                     message?: string;
                     empty?: boolean;
+                    message_id?: string;
+                    words?: VocabularyItem[];
                 };
 
                 if (message.type === 'transcript' && message.role && message.text !== undefined) {
-                    handlersRef.current.onTranscript(message.role, message.text, Boolean(message.final));
+                    handlersRef.current.onTranscript(message.role, message.text, Boolean(message.final), message.words);
                     if (message.role === 'assistant' && !message.final) {
                         setPhaseBoth('thinking');
                     }
                     return;
                 }
 
+                if (message.type === 'vocabulary' && message.message_id) {
+                    handlersRef.current.onVocabulary?.(message.message_id, message.words ?? []);
+                    return;
+                }
+
                 if (message.type === 'audio' && message.audio) {
                     void enqueueWav(message.audio).catch(() => {
-                        handlersRef.current.onError('The browser could not play the tutor audio.');
+                        handlersRef.current.onError(my.couldNotPlay);
                     });
                     return;
                 }
@@ -212,6 +262,29 @@ export function useAudioStream({
         }
     }, []);
 
+    const repeat = useCallback(
+        (text: string) => {
+            const socket = socketRef.current;
+            if (!socket || socket.readyState !== WebSocket.OPEN || !text.trim()) {
+                handlersRef.current.onError(my.voiceDown);
+                return;
+            }
+            stopPlayback();
+            turnDoneRef.current = false;
+            setPhaseBoth('speaking');
+            socket.send(JSON.stringify({ type: 'repeat', text }));
+        },
+        [setPhaseBoth, stopPlayback],
+    );
+
+    const annotate = useCallback((messageId: string, text: string) => {
+        const socket = socketRef.current;
+        if (!socket || socket.readyState !== WebSocket.OPEN || !messageId || !text.trim()) {
+            return;
+        }
+        socket.send(JSON.stringify({ type: 'annotate', message_id: messageId, text }));
+    }, []);
+
     const interrupt = useCallback(() => {
         const socket = socketRef.current;
         if (socket && socket.readyState === WebSocket.OPEN) {
@@ -233,7 +306,7 @@ export function useAudioStream({
 
         const socket = socketRef.current;
         if (!socket || socket.readyState !== WebSocket.OPEN) {
-            handlersRef.current.onError('The voice engine is not connected. Start the Python service on port 8001.');
+            handlersRef.current.onError(my.voiceDown);
             return;
         }
 
@@ -241,55 +314,39 @@ export function useAudioStream({
             interrupt();
         }
 
-        let stream: MediaStream;
-        try {
-            stream = await navigator.mediaDevices.getUserMedia({
-                audio: { echoCancellation: true, noiseSuppression: true },
-            });
-        } catch {
-            handlersRef.current.onError('Microphone permission is required to practice speaking.');
-            return;
-        }
-
-        const mime = preferredMime();
-        const recorder = new MediaRecorder(stream, { mimeType: mime });
-        const chunks: Blob[] = [];
-        const context = new AudioContext();
-        const analyser = context.createAnalyser();
-        analyser.fftSize = 2048;
-        const source = context.createMediaStreamSource(stream);
-        source.connect(analyser);
-        const samples = new Uint8Array(analyser.fftSize);
+        let stream: MediaStream | null = null;
+        let context: AudioContext | null = null;
         let frame = 0;
-        let heardSpeech = false;
-        let silenceStarted: number | null = null;
-        let speechStartedAt = 0;
-        let stopped = false;
+        let cancelled = false;
+        let commitRequested = false;
+        let committed = false;
+        let recognitionFailed = false;
+        let finalText = '';
+        let interim = '';
+        let takeWav: (() => Blob) | null = null;
 
-        const finish = () => {
-            if (stopped) {
+        const releaseMic = () => {
+            cancelAnimationFrame(frame);
+            stream?.getTracks().forEach((track) => track.stop());
+            closeAudioContext(context);
+            setLevel(0);
+            recorderStopRef.current = null;
+        };
+
+        const sendUtterance = (text: string) => {
+            const active = socketRef.current;
+            if (!active || active.readyState !== WebSocket.OPEN) {
+                handlersRef.current.onError(my.lostBeforeSend);
+                setPhaseBoth('idle');
                 return;
             }
-            stopped = true;
-            cancelAnimationFrame(frame);
-            recorderStopRef.current = null;
-            if (recorder.state !== 'inactive') {
-                recorder.stop();
-            }
+            setPhaseBoth('thinking');
+            turnDoneRef.current = false;
+            active.send(JSON.stringify({ type: 'utterance', text }));
         };
 
-        recorder.ondataavailable = (event) => {
-            if (event.data.size > 0) {
-                chunks.push(event.data);
-            }
-        };
-
-        recorder.onstop = () => {
-            stream.getTracks().forEach((track) => track.stop());
-            void context.close();
-            setLevel(0);
-            const blob = new Blob(chunks, { type: mime });
-            if (!heardSpeech || blob.size < 800) {
+        const sendWav = (blob: Blob) => {
+            if (blob.size < 1000) {
                 setPhaseBoth('idle');
                 return;
             }
@@ -301,13 +358,145 @@ export function useAudioStream({
                 const audio = result.includes(',') ? result.split(',')[1] : result;
                 const active = socketRef.current;
                 if (!active || active.readyState !== WebSocket.OPEN) {
-                    handlersRef.current.onError('Lost the voice engine before the audio was sent.');
+                    handlersRef.current.onError(my.lostBeforeAudio);
                     setPhaseBoth('idle');
                     return;
                 }
-                active.send(JSON.stringify({ type: 'audio', audio, mime }));
+                active.send(JSON.stringify({ type: 'audio', audio, mime: 'audio/wav' }));
             };
             reader.readAsDataURL(blob);
+        };
+
+        const finishTurn = () => {
+            if (committed || cancelled) {
+                return;
+            }
+            committed = true;
+            const blob = takeWav ? takeWav() : new Blob();
+            releaseMic();
+            const text = spokenText(finalText, interim);
+            if (!recognitionFailed && text) {
+                sendUtterance(text);
+                return;
+            }
+            sendWav(blob);
+        };
+
+        const recognition = speechRecognition();
+        if (recognition) {
+            recognition.onresult = (event) => {
+                let pending = '';
+                for (let index = event.resultIndex; index < event.results.length; index++) {
+                    const piece = event.results[index]?.[0]?.transcript ?? '';
+                    if (event.results[index]?.isFinal) {
+                        finalText = spokenText(finalText, piece);
+                    } else {
+                        pending += piece;
+                    }
+                }
+                interim = pending;
+                const text = spokenText(finalText, interim);
+                if (text) {
+                    handlersRef.current.onTranscript('user', text, false);
+                }
+            };
+            recognition.onerror = (event) => {
+                if (event.error === 'no-speech' || event.error === 'aborted') {
+                    return;
+                }
+                recognitionFailed = true;
+            };
+            recognition.onend = () => {
+                if (cancelled || committed) {
+                    return;
+                }
+                if (!commitRequested) {
+                    if (!recognitionFailed) {
+                        try {
+                            recognition.start();
+                            return;
+                        } catch {
+                            recognitionFailed = true;
+                        }
+                    }
+                    return;
+                }
+                finishTurn();
+            };
+            try {
+                recognition.start();
+            } catch {
+                recognitionFailed = true;
+            }
+        } else {
+            recognitionFailed = true;
+        }
+
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                },
+            });
+        } catch {
+            cancelled = true;
+            try {
+                recognition?.abort();
+            } catch {
+                // not started
+            }
+            handlersRef.current.onError(my.needMic);
+            return;
+        }
+
+        if (cancelled) {
+            stream.getTracks().forEach((track) => track.stop());
+            return;
+        }
+
+        setPhaseBoth('listening');
+        context = new AudioContext();
+        const analyser = context.createAnalyser();
+        analyser.fftSize = 2048;
+        const meter = context.createMediaStreamSource(stream);
+        const meterMute = context.createGain();
+        meterMute.gain.value = 0;
+        meter.connect(analyser);
+        analyser.connect(meterMute);
+        meterMute.connect(context.destination);
+        try {
+            takeWav = await capturePcm(context, context.createMediaStreamSource(stream));
+        } catch {
+            if (recognitionFailed) {
+                releaseMic();
+                handlersRef.current.onError(my.couldNotCapture);
+                setPhaseBoth('idle');
+                return;
+            }
+        }
+
+        const samples = new Uint8Array(analyser.fftSize);
+        let heardSpeech = false;
+        let silenceStarted: number | null = null;
+        let speechStartedAt = 0;
+
+        const finish = () => {
+            if (commitRequested || committed) {
+                return;
+            }
+            commitRequested = true;
+            cancelAnimationFrame(frame);
+            if (recognition && !recognitionFailed) {
+                try {
+                    recognition.stop();
+                    return;
+                } catch {
+                    // Send the words already recognized.
+                }
+            }
+            finishTurn();
         };
 
         const watch = (now: number) => {
@@ -334,8 +523,6 @@ export function useAudioStream({
         };
 
         recorderStopRef.current = finish;
-        recorder.start();
-        setPhaseBoth('listening');
         frame = requestAnimationFrame(watch);
     }, [interrupt, setPhaseBoth, stopListening]);
 
@@ -343,7 +530,7 @@ export function useAudioStream({
         return () => {
             recorderStopRef.current?.();
             stopPlayback();
-            void playbackRef.current?.close();
+            closeAudioContext(playbackRef.current);
         };
     }, [stopPlayback]);
 
@@ -353,5 +540,7 @@ export function useAudioStream({
         connected,
         startListening,
         sendConfig,
+        repeat,
+        annotate,
     };
 }

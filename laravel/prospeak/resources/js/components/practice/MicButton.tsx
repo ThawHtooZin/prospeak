@@ -1,4 +1,5 @@
 import { type VoicePhase } from '@/hooks/useAudioStream';
+import { my } from '@/lib/my';
 
 interface MicButtonProps {
     phase: VoicePhase;
@@ -7,10 +8,10 @@ interface MicButtonProps {
 }
 
 const labels: Record<VoicePhase, string> = {
-    idle: 'Start speaking',
-    listening: 'Stop and send',
-    thinking: 'Interrupt',
-    speaking: 'Interrupt and speak',
+    idle: my.startSpeaking,
+    listening: my.stopAndSend,
+    thinking: my.interrupt,
+    speaking: my.interruptAndSpeak,
 };
 
 export function MicButton({ phase, level, onClick }: MicButtonProps) {

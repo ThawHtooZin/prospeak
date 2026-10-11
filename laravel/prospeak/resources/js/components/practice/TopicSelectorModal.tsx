@@ -1,4 +1,5 @@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { my, myTopic } from '@/lib/my';
 import { SpeedControlSlider } from '@/components/practice/SpeedControlSlider';
 import { type PauseSpeed } from '@/types';
 import { useState } from 'react';
@@ -51,9 +52,9 @@ export function TopicSelectorModal({ open, topics, busy, error, onClose, onCreat
                 {step === 'topic' ? (
                     <>
                         <DialogHeader>
-                            <DialogTitle className="font-serif text-2xl text-[#f4efe6]">What do you want to practice?</DialogTitle>
+                            <DialogTitle className="font-serif text-2xl text-[#f4efe6]">{my.whatToPractice}</DialogTitle>
                             <DialogDescription className="text-[#a39888]">
-                                Pick a situation, write your own, or let the tutor notice the topic as you talk.
+                                {my.pickSituation}
                             </DialogDescription>
                         </DialogHeader>
                         <div className="grid gap-2 sm:grid-cols-2">
@@ -73,7 +74,7 @@ export function TopicSelectorModal({ open, topics, busy, error, onClose, onCreat
                                                 : 'border-[#3a3228] bg-[#14110e] hover:border-[#6a5c4b]'
                                         }`}
                                     >
-                                        {topic}
+                                        {myTopic(topic)}
                                     </button>
                                 );
                             })}
@@ -91,12 +92,12 @@ export function TopicSelectorModal({ open, topics, busy, error, onClose, onCreat
                                 className="mt-1 size-4 accent-[#e8a04a]"
                             />
                             <span className="grid flex-1 gap-2">
-                                <span className="text-sm">Custom topic</span>
+                                <span className="text-sm">{my.customTopic}</span>
                                 {customOn && (
                                     <input
                                         value={customText}
                                         onChange={(event) => setCustomText(event.target.value)}
-                                        placeholder="Ordering coffee at a busy counter"
+                                        placeholder={my.customPlaceholder}
                                         className="h-10 rounded-xl border border-[#3a3228] bg-[#1c1814] px-3 text-sm outline-none focus:border-[#e8a04a]"
                                     />
                                 )}
@@ -108,7 +109,7 @@ export function TopicSelectorModal({ open, topics, busy, error, onClose, onCreat
                                 onClick={() => goToSpeed(true)}
                                 className="rounded-full px-4 py-2 text-sm text-[#d9d0c3] hover:bg-white/5"
                             >
-                                Skip topic
+                                {my.skipTopic}
                             </button>
                             <button
                                 type="button"
@@ -116,16 +117,16 @@ export function TopicSelectorModal({ open, topics, busy, error, onClose, onCreat
                                 onClick={() => goToSpeed(false)}
                                 className="rounded-full bg-[#e8a04a] px-5 py-2 text-sm font-medium text-[#1a140c] disabled:opacity-40"
                             >
-                                Continue
+                                {my.continueStep}
                             </button>
                         </div>
                     </>
                 ) : (
                     <>
                         <DialogHeader>
-                            <DialogTitle className="font-serif text-2xl text-[#f4efe6]">How much space between sentences?</DialogTitle>
+                            <DialogTitle className="font-serif text-2xl text-[#f4efe6]">{my.howMuchSpace}</DialogTitle>
                             <DialogDescription className="text-[#a39888]">
-                                This pause is inserted after each spoken sentence so you can catch the words.
+                                {my.pauseHelp}
                             </DialogDescription>
                         </DialogHeader>
                         <SpeedControlSlider value={pauseSpeed} onChange={setPauseSpeed} />
@@ -137,7 +138,7 @@ export function TopicSelectorModal({ open, topics, busy, error, onClose, onCreat
                                 onClick={() => setStep('topic')}
                                 className="rounded-full px-4 py-2 text-sm text-[#d9d0c3] hover:bg-white/5"
                             >
-                                Back
+                                {my.back}
                             </button>
                             <button
                                 type="button"
@@ -152,7 +153,7 @@ export function TopicSelectorModal({ open, topics, busy, error, onClose, onCreat
                                 }
                                 className="rounded-full bg-[#e8a04a] px-5 py-2 text-sm font-medium text-[#1a140c] disabled:opacity-40"
                             >
-                                {busy ? 'Starting…' : 'Start conversation'}
+                                {busy ? my.starting : my.startConversation}
                             </button>
                         </div>
                     </>

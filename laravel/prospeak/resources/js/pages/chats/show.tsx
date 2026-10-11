@@ -2,49 +2,107 @@ import { MicButton } from '@/components/practice/MicButton';
 import { PracticeShell } from '@/components/practice/PracticeShell';
 import { SpeedControlSlider } from '@/components/practice/SpeedControlSlider';
 import { useAudioStream } from '@/hooks/useAudioStream';
-import { storeMessage, updatePauseSpeed } from '@/lib/chat-api';
-import { type ChatDetail, type ChatMessageItem } from '@/types/chat';
+import { fetchMessages, saveVocabulary, storeMessage, updatePauseSpeed } from '@/lib/chat-api';
+import { my, myTitle, myTopic } from '@/lib/my';
+import { type ChatDetail, type ChatMessageItem, type VocabularyItem } from '@/types/chat';
 import { type PauseSpeed } from '@/types';
 import { Head, router } from '@inertiajs/react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+
+function messageKey(message: Pick<ChatMessageItem, 'sender' | 'content'>): string {
+    return `${message.sender}:${message.content}`;
+}
+
+function mergeMessages(saved: ChatMessageItem[], local: ChatMessageItem[]): ChatMessageItem[] {
+    const localByKey = new Map(local.map((message) => [messageKey(message), message]));
+    const base = saved.map((message) => {
+        const previous = localByKey.get(messageKey(message));
+        if (message.vocabulary == null && previous?.vocabulary != null) {
+            return { ...message, vocabulary: previous.vocabulary };
+        }
+        return message;
+    });
+    const seen = new Set(base.map(messageKey));
+    const pending = local.filter((message) => !seen.has(messageKey(message)));
+    return [...base, ...pending];
+}
 
 const phaseCopy = {
-    idle: 'Tap the microphone and start speaking.',
-    listening: 'Listening… a short pause will send what you said.',
-    thinking: 'Working out a reply.',
-    speaking: 'Speaking. The pause after each sentence follows your speed.',
+    idle: my.ready,
+    listening: my.listening,
+    thinking: my.thinking,
+    speaking: my.speaking,
 };
 
 export default function ChatShow({ chat }: { chat: ChatDetail }) {
     const [messages, setMessages] = useState<ChatMessageItem[]>(chat.messages);
-    const [draft, setDraft] = useState('');
+    const [userDraft, setUserDraft] = useState('');
+    const [tutorDraft, setTutorDraft] = useState('');
     const [pauseSpeed, setPauseSpeed] = useState<PauseSpeed>(chat.pause_speed);
-    const [showTranscript, setShowTranscript] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const savedRef = useRef(new Set(chat.messages.map((message) => `${message.sender}:${message.content}`)));
     const scrollerRef = useRef<HTMLDivElement | null>(null);
 
     useEffect(() => {
-        setMessages(chat.messages);
-        setDraft('');
         setPauseSpeed(chat.pause_speed);
-        savedRef.current = new Set(chat.messages.map((message) => `${message.sender}:${message.content}`));
-    }, [chat.id, chat.messages, chat.pause_speed]);
+    }, [chat.id, chat.pause_speed]);
+
+    useEffect(() => {
+        let cancelled = false;
+        const remembered = chat.messages;
+        setUserDraft('');
+        setTutorDraft('');
+        setMessages(remembered);
+        savedRef.current = new Set(remembered.map(messageKey));
+
+        void fetchMessages(chat.id)
+            .then((detail) => {
+                if (cancelled) {
+                    return;
+                }
+                setMessages((current) => {
+                    const merged = mergeMessages(detail.messages, current);
+                    savedRef.current = new Set(merged.map(messageKey));
+                    return merged;
+                });
+            })
+            .catch(() => undefined);
+
+        return () => {
+            cancelled = true;
+        };
+        // The saved thread is loaded by chat id. A later page prop must not replace lines already spoken.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [chat.id]);
 
     const onTranscript = useCallback(
-        (role: 'user' | 'assistant', text: string, final: boolean) => {
+        (role: 'user' | 'assistant', text: string, final: boolean, words?: VocabularyItem[]) => {
             if (!final) {
-                if (role === 'assistant') {
-                    setDraft(text);
+                if (role === 'user') {
+                    setUserDraft(text);
+                } else {
+                    setTutorDraft(text);
                 }
                 return;
             }
 
-            setDraft('');
-            const key = `${role}:${text}`;
+            if (role === 'user') {
+                setUserDraft('');
+            } else {
+                setTutorDraft('');
+            }
+            const key = messageKey({ sender: role, content: text });
+            const vocabulary = role === 'assistant' ? (words ?? null) : null;
             setMessages((current) => {
                 if (savedRef.current.has(key) || current.some((message) => message.sender === role && message.content === text)) {
-                    return current;
+                    if (vocabulary == null) {
+                        return current;
+                    }
+                    return current.map((message) =>
+                        message.sender === role && message.content === text && message.vocabulary == null
+                            ? { ...message, vocabulary }
+                            : message,
+                    );
                 }
                 return [
                     ...current,
@@ -52,6 +110,7 @@ export default function ChatShow({ chat }: { chat: ChatDetail }) {
                         id: crypto.randomUUID(),
                         sender: role,
                         content: text,
+                        vocabulary,
                         created_at: new Date().toISOString(),
                     },
                 ];
@@ -61,15 +120,31 @@ export default function ChatShow({ chat }: { chat: ChatDetail }) {
                 return;
             }
             savedRef.current.add(key);
-            void storeMessage(chat.id, role, text)
-                .then(() => {
+            void storeMessage(chat.id, role, text, vocabulary)
+                .then(() => fetchMessages(chat.id))
+                .then((detail) => {
+                    setMessages((current) => {
+                        const merged = mergeMessages(detail.messages, current);
+                        savedRef.current = new Set(merged.map(messageKey));
+                        return merged;
+                    });
                     if (role === 'user') {
-                        router.reload({ only: ['chats'], preserveState: true, preserveScroll: true });
+                        router.reload({ only: ['chats'] });
                     }
                 })
                 .catch((caught: unknown) => {
-                    setError(caught instanceof Error ? caught.message : 'Could not save that line.');
+                    setError(caught instanceof Error ? caught.message : my.couldNotSave);
                 });
+        },
+        [chat.id],
+    );
+
+    const onVocabulary = useCallback(
+        (messageId: string, words: VocabularyItem[]) => {
+            setMessages((current) =>
+                current.map((message) => (message.id === messageId ? { ...message, vocabulary: words } : message)),
+            );
+            void saveVocabulary(chat.id, messageId, words).catch(() => undefined);
         },
         [chat.id],
     );
@@ -82,82 +157,197 @@ export default function ChatShow({ chat }: { chat: ChatDetail }) {
         pauseSpeed,
         greet: chat.messages.length === 0,
         onTranscript,
+        onVocabulary,
         onError,
     });
 
+    const requestedWords = useRef(new Set<string>());
+
+    useEffect(() => {
+        if (!voice.connected) {
+            return;
+        }
+        const missing = messages.filter((message) => message.sender === 'assistant' && message.vocabulary == null);
+        for (const message of missing.slice(-8)) {
+            if (requestedWords.current.has(message.id)) {
+                continue;
+            }
+            requestedWords.current.add(message.id);
+            voice.annotate(message.id, message.content);
+        }
+    }, [messages, voice.connected, voice.annotate]);
+
     useEffect(() => {
         scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight });
-    }, [messages, draft, showTranscript]);
+    }, [messages, userDraft, tutorDraft]);
 
     const changeSpeed = (next: PauseSpeed) => {
         setPauseSpeed(next);
         voice.sendConfig(next);
         void updatePauseSpeed(chat.id, next).catch((caught: unknown) => {
-            setError(caught instanceof Error ? caught.message : 'Could not update the pause speed.');
+            setError(caught instanceof Error ? caught.message : my.couldNotUpdatePause);
         });
     };
 
     return (
         <PracticeShell activeChatId={chat.id}>
-            <Head title={chat.title} />
+            <Head title={myTitle(chat.title)} />
             <main className="flex min-h-0 flex-1 flex-col">
-                <header className="flex items-center justify-between gap-4 px-6 pt-6">
-                    <div>
-                        <p className="text-xs tracking-[0.18em] text-[#a39888] uppercase">
-                            {chat.topic ?? 'Open conversation'}
+                <header className="flex items-center justify-between gap-4 border-b border-[#2b251f] px-6 py-4">
+                    <div className="min-w-0">
+                        <p className="text-xs text-[#a39888]">
+                            {myTopic(chat.topic)}
                         </p>
-                        <h1 className="font-serif text-2xl">{chat.title}</h1>
+                        <h1 className="truncate font-serif text-2xl">{myTitle(chat.title)}</h1>
                     </div>
-                    <button
-                        type="button"
-                        onClick={() => setShowTranscript((current) => !current)}
-                        aria-pressed={showTranscript}
-                        className="rounded-full border border-[#3a3228] px-4 py-2 text-sm text-[#d9d0c3] hover:border-[#6a5c4b]"
-                    >
-                        {showTranscript ? 'Hide transcript' : 'Show transcript'}
-                    </button>
+                    <p className="shrink-0 text-sm text-[#a39888]">
+                        {voice.connected ? phaseCopy[voice.phase] : my.connecting}
+                    </p>
                 </header>
 
-                <section className="flex flex-1 flex-col items-center justify-center px-6 text-center">
-                    <p className="max-w-md font-serif text-3xl leading-snug text-[#f6f1e8]">{phaseCopy[voice.phase]}</p>
-                    <p className="mt-3 text-sm text-[#a39888]">
-                        {voice.connected ? 'Voice engine connected' : 'Connecting to the voice engine…'}
-                    </p>
-                    {error && <p className="mt-4 max-w-md text-sm text-[#ffb4a8]">{error}</p>}
-                </section>
-
-                {showTranscript && (
-                    <div ref={scrollerRef} className="mx-auto mb-4 max-h-56 w-full max-w-2xl overflow-y-auto rounded-3xl border border-[#3a3228] bg-[#1c1814] px-5 py-4 text-left">
-                        {messages.length === 0 && !draft && <p className="text-sm text-[#a39888]">Nothing written down yet. Listen first if you can.</p>}
-                        <ul className="space-y-3">
-                            {messages.map((message) => (
-                                <li key={message.id} className="text-sm leading-relaxed">
-                                    <span className="mr-2 text-xs tracking-wide text-[#a39888] uppercase">
-                                        {message.sender === 'user' ? 'You' : 'Tutor'}
-                                    </span>
-                                    {message.content}
-                                </li>
-                            ))}
-                            {draft && (
-                                <li className="text-sm leading-relaxed text-[#d9d0c3]">
-                                    <span className="mr-2 text-xs tracking-wide text-[#a39888] uppercase">Tutor</span>
-                                    {draft}
-                                </li>
-                            )}
-                        </ul>
+                <div ref={scrollerRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6">
+                    <div role="log" aria-live="polite" className="mx-auto flex w-full max-w-3xl flex-col gap-4">
+                        {messages.length === 0 && !userDraft && !tutorDraft && (
+                            <p className="px-2 py-16 text-center text-sm text-[#a39888]">
+                                {my.emptyThread}
+                            </p>
+                        )}
+                        {messages.map((message) => (
+                            <ChatBubble
+                                key={message.id}
+                                sender={message.sender}
+                                content={message.content}
+                                vocabulary={message.vocabulary}
+                                onRepeat={message.sender === 'assistant' ? voice.repeat : undefined}
+                            />
+                        ))}
+                        {userDraft && <ChatBubble sender="user" content={userDraft} pending />}
+                        {tutorDraft && <ChatBubble sender="assistant" content={tutorDraft} pending />}
                     </div>
-                )}
+                </div>
 
-                <footer className="flex flex-col items-center gap-5 px-6 pt-2 pb-10">
-                    <div className="flex items-end gap-4">
+                {error && <p className="px-6 pb-2 text-center text-sm text-[#ffb4a8]">{error}</p>}
+
+                <footer className="border-t border-[#2b251f] px-4 py-4 sm:px-6">
+                    <div className="mx-auto flex w-full max-w-3xl items-end justify-center gap-4">
                         <MicButton phase={voice.phase} level={voice.level} onClick={() => void voice.startListening()} />
                         <div className="w-56 pb-2">
-                            <p className="mb-2 text-center text-xs tracking-wide text-[#a39888] uppercase">Pause speed</p>
+                            <p className="mb-2 text-center text-xs text-[#a39888]">{my.pauseSpeed}</p>
                             <SpeedControlSlider compact value={pauseSpeed} onChange={changeSpeed} />
                         </div>
                     </div>
                 </footer>
             </main>
         </PracticeShell>
+    );
+}
+
+function phraseRanges(content: string, words: VocabularyItem[]): { start: number; end: number }[] {
+    const ranges: { start: number; end: number }[] = [];
+    const lower = content.toLowerCase();
+    const sorted = [...words].sort((left, right) => right.phrase.length - left.phrase.length);
+
+    for (const word of sorted) {
+        const needle = word.phrase.trim().toLowerCase();
+        if (needle.length < 4) {
+            continue;
+        }
+        let from = 0;
+        while (from < lower.length) {
+            const index = lower.indexOf(needle, from);
+            if (index < 0) {
+                break;
+            }
+            const end = index + needle.length;
+            const overlaps = ranges.some((range) => index < range.end && end > range.start);
+            if (!overlaps) {
+                ranges.push({ start: index, end });
+            }
+            from = end;
+        }
+    }
+
+    return ranges.sort((left, right) => left.start - right.start);
+}
+
+function highlightedText(content: string, words: VocabularyItem[] | null | undefined) {
+    const ranges = phraseRanges(content, words ?? []);
+    if (ranges.length === 0) {
+        return content;
+    }
+
+    const pieces: ReactNode[] = [];
+    let cursor = 0;
+    ranges.forEach((range, index) => {
+        if (range.start > cursor) {
+            pieces.push(content.slice(cursor, range.start));
+        }
+        pieces.push(
+            <span key={index} className="underline decoration-[#e8a04a] decoration-2 underline-offset-4">
+                {content.slice(range.start, range.end)}
+            </span>,
+        );
+        cursor = range.end;
+    });
+    if (cursor < content.length) {
+        pieces.push(content.slice(cursor));
+    }
+    return pieces;
+}
+
+function ChatBubble({
+    sender,
+    content,
+    vocabulary = null,
+    pending = false,
+    onRepeat,
+}: {
+    sender: 'user' | 'assistant';
+    content: string;
+    vocabulary?: VocabularyItem[] | null;
+    pending?: boolean;
+    onRepeat?: (text: string) => void;
+}) {
+    const mine = sender === 'user';
+    const words = vocabulary ?? [];
+
+    return (
+        <div className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
+            <div className={`max-w-[85%] sm:max-w-[75%] ${pending ? 'opacity-80' : ''}`}>
+                <div className={`mb-1 flex items-center gap-3 ${mine ? 'justify-end' : 'justify-start'}`}>
+                    <p className="text-xs text-[#a39888]">{mine ? my.you : my.tutor}</p>
+                    {!mine && !pending && onRepeat && (
+                        <button
+                            type="button"
+                            onClick={() => onRepeat(content)}
+                            className="text-xs text-[#e8a04a] hover:text-[#f4efe6]"
+                        >
+                            {my.repeat}
+                        </button>
+                    )}
+                </div>
+                <div
+                    className={`rounded-3xl px-4 py-3 text-sm leading-relaxed ${
+                        mine
+                            ? 'rounded-br-md bg-[#e8a04a] text-[#1a140c]'
+                            : 'rounded-bl-md border border-[#3a3228] bg-[#1c1814] text-[#f4efe6]'
+                    }`}
+                >
+                    {mine ? content : highlightedText(content, words)}
+                </div>
+                {!mine && words.length > 0 && (
+                    <dl className="mt-2 space-y-1 px-1">
+                        {words.map((word) => (
+                            <div key={word.phrase} className="text-xs leading-relaxed">
+                                <dt className="inline font-medium text-[#e8a04a] underline decoration-[#e8a04a]/70 underline-offset-2">
+                                    {word.phrase}
+                                </dt>
+                                <dd className="inline text-[#a39888]"> — {word.meaning}</dd>
+                            </div>
+                        ))}
+                    </dl>
+                )}
+            </div>
+        </div>
     );
 }

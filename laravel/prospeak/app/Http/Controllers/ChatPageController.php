@@ -22,12 +22,7 @@ class ChatPageController extends Controller
                 'topic' => $chat->topic,
                 'pause_speed' => $chat->pause_speed->value,
                 'websocket_url' => rtrim((string) config('services.prospeak.ws_url'), '/').'/ws/chat/'.$chat->id,
-                'messages' => $chat->messages->map(fn ($message) => [
-                    'id' => $message->id,
-                    'sender' => $message->sender->value,
-                    'content' => $message->content,
-                    'created_at' => $message->created_at?->toIso8601String(),
-                ]),
+                'messages' => $chat->messages->map(fn ($message) => $message->toClientArray()),
             ],
         ]);
     }

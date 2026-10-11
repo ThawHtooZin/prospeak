@@ -1,3 +1,4 @@
+import { my } from '@/lib/my';
 import { dashboard, login, register } from '@/routes';
 import { type SharedData } from '@/types';
 import { Head, Link, usePage } from '@inertiajs/react';
@@ -9,26 +10,26 @@ export default function Welcome({ canRegister = true }: { canRegister?: boolean 
         <>
             <Head title="ProSpeak">
                 <link rel="preconnect" href="https://fonts.bunny.net" />
-                <link href="https://fonts.bunny.net/css?family=fraunces:500,600|outfit:400,500,600" rel="stylesheet" />
+                <link href="https://fonts.bunny.net/css?family=fraunces:500,600|outfit:400,500,600|noto-sans-myanmar:400,500,600" rel="stylesheet" />
             </Head>
-            <div className="min-h-screen bg-[#14110e] text-[#f4efe6]" style={{ fontFamily: 'Outfit, ui-sans-serif, system-ui, sans-serif' }}>
+            <div className="min-h-screen bg-[#14110e] text-[#f4efe6]" style={{ fontFamily: '"Noto Sans Myanmar", "Myanmar Text", "Myanmar MN", Outfit, ui-sans-serif, system-ui, sans-serif' }}>
                 <header className="mx-auto flex w-full max-w-5xl items-center justify-between px-6 py-6">
-                    <span className="font-serif text-xl" style={{ fontFamily: 'Fraunces, ui-serif, Georgia, serif' }}>
+                    <span className="font-serif text-xl" style={{ fontFamily: 'Fraunces, "Noto Sans Myanmar", "Myanmar Text", ui-serif, Georgia, serif' }}>
                         ProSpeak
                     </span>
                     <nav className="flex items-center gap-3 text-sm">
                         {auth.user ? (
                             <Link href={dashboard()} className="rounded-full bg-[#e8a04a] px-4 py-2 font-medium text-[#1a140c]">
-                                Continue
+                                {my.continue}
                             </Link>
                         ) : (
                             <>
                                 <Link href={login()} className="rounded-full px-4 py-2 text-[#d9d0c3] hover:text-white">
-                                    Log in
+                                    {my.logIn}
                                 </Link>
                                 {canRegister && (
                                     <Link href={register()} className="rounded-full bg-[#e8a04a] px-4 py-2 font-medium text-[#1a140c]">
-                                        Create account
+                                        {my.createAccount}
                                     </Link>
                                 )}
                             </>
@@ -37,22 +38,22 @@ export default function Welcome({ canRegister = true }: { canRegister?: boolean 
                 </header>
                 <main className="mx-auto grid max-w-5xl gap-12 px-6 py-16 lg:grid-cols-[1.2fr_0.8fr] lg:py-24">
                     <div>
-                        <p className="text-sm tracking-[0.22em] text-[#e8a04a] uppercase">English, spoken</p>
+                        <p className="text-sm text-[#e8a04a]">{my.spokenEnglish}</p>
                         <h1
-                            className="mt-4 max-w-xl text-5xl leading-[1.05] text-[#f6f1e8] sm:text-6xl"
-                            style={{ fontFamily: 'Fraunces, ui-serif, Georgia, serif' }}
+                            className="mt-4 max-w-xl text-4xl leading-[1.7] text-[#f6f1e8] sm:text-5xl"
+                            style={{ fontFamily: '"Noto Sans Myanmar", "Myanmar Text", "Myanmar MN", Fraunces, ui-serif, Georgia, serif' }}
                         >
-                            Practice the conversation, not the worksheet.
+                            {my.welcomeTitle}
                         </h1>
                         <p className="mt-6 max-w-lg text-lg leading-relaxed text-[#a39888]">
-                            Choose a situation, talk into the microphone, and hear a tutor answer in short sentences with a pause you can slow down.
+                            {my.welcomeBody}
                         </p>
                     </div>
                     <ol className="space-y-4 self-end">
                         {[
-                            ['01', 'Pick a topic, or skip it and let the talk decide.'],
-                            ['02', 'Set the pause: fast, normal, or beginner.'],
-                            ['03', 'Speak. The transcript stays hidden until you ask for it.'],
+                            ['01', my.stepTopic],
+                            ['02', my.stepPause],
+                            ['03', my.stepChat],
                         ].map(([index, line]) => (
                             <li key={index} className="rounded-3xl border border-[#3a3228] bg-[#1c1814] p-5">
                                 <span className="text-xs tracking-[0.18em] text-[#e8a04a]">{index}</span>
